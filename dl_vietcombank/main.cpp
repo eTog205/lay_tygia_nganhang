@@ -170,7 +170,6 @@ bool capnhat_tygia(const string& currency, double mua_tienmat, double mua_chuyen
 	SQLHSTMT h_stmt = nullptr;
 	SQLRETURN ret;
 
-	// Khởi tạo môi trường ODBC
 	ret = SQLAllocHandle(SQL_HANDLE_ENV, nullptr, &h_env);
 	if (ret != SQL_SUCCESS && ret != SQL_SUCCESS_WITH_INFO)
 		return false;
@@ -259,7 +258,6 @@ void capnhat_intb(const vector<ty_gia_ngoai_te>& ds_tygia)
 {
 	for (const auto& tygia : ds_tygia)
 	{
-		// Loại bỏ dấu phẩy trước khi chuyển đổi giá trị số
 		string strTienMat = bo_dauphay(tygia.mua_tienmat);
 		string strChuyenKhoan = bo_dauphay(tygia.mua_chuyenkhoan);
 		string strBan = bo_dauphay(tygia.ban);
