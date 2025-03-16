@@ -1,14 +1,9 @@
-
-#include <boost/asio.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/beast.hpp>
 #include <iostream>
 #include <libxml/HTMLparser.h>
 #include <libxml/xpath.h>
-#include <sql.h>
 #include <sqlext.h>
-#include <string>
-#include <vector>
 #pragma comment(lib, "odbc32.lib")
 
 using namespace std;
@@ -19,17 +14,17 @@ namespace http = boost::beast::http;
 #define SQL_USER "sa"
 #define SQL_PASSWORD "XDXDxdxd123456@"
 
-struct ExchangeRate
+struct ty_gia_ngoai_te
 {
-	string currency_name;
-	string currency_code;
-	string cash_buy;
-	string transfer_buy;
-	string sell;
+	string ten_ngoaite;
+	string ma_ngoaite;
+	string mua_tienmat;
+	string mua_chuyenkhoan;
+	string ban;
 };
 
-// Hàm lấy HTML từ Vietcombank bằng HTTPS
-string GetExchangeRateData()
+//lấy dl từ vietcombank qua HTTPS
+string lay_dl_tygia()
 {
 	try
 	{
@@ -50,7 +45,7 @@ string GetExchangeRateData()
 			throw boost::system::system_error{ ec };
 		}
 
-		// Không dùng xác thực chứng chỉ (chỉ dùng cho thử nghiệm)
+		//!! Không xác thực chứng chỉ
 		stream.set_verify_mode(boost::asio::ssl::verify_none);
 		stream.handshake(boost::asio::ssl::stream_base::client);
 
@@ -61,7 +56,7 @@ string GetExchangeRateData()
 
 		boost::beast::flat_buffer buffer;
 		http::response<http::dynamic_body> res;
-		http::read(stream, buffer, res);
+		read(stream, buffer, res);
 
 		return buffers_to_string(res.body().data());
 	} catch (exception& e)
@@ -71,8 +66,7 @@ string GetExchangeRateData()
 	}
 }
 
-// Hàm loại bỏ khoảng trắng đầu/cuối
-string trim(const string& str)
+string bo_khoangtrang(const string& str)
 {
 	size_t dau = str.find_first_not_of(" \t\n\r");
 	if (dau == string::npos)
@@ -81,48 +75,44 @@ string trim(const string& str)
 	return str.substr(dau, (cuoi - dau + 1));
 }
 
-// Hàm xử lý giá trị (cắt bỏ khoảng trắng, ...)
-string cleanValue(const string& giatri)
+string xl_giatri(const string& giatri)
 {
-	return trim(giatri);
+	return bo_khoangtrang(giatri);
 }
 
-// Hàm loại bỏ dấu phẩy khỏi chuỗi số
-string RemoveCommas(const string& str)
+string bo_dauphay(const string& str)
 {
 	string kq = str;
 	kq.erase(ranges::remove(kq, ',').begin(), kq.end());
 	return kq;
 }
 
-// Hàm lọc dữ liệu tỷ giá từ nội dung HTML (đọc trực tiếp từ bộ nhớ) sử dụng libxml2 và XPath
-vector<ExchangeRate> parseHTMLFromString(const string& nd_html)
+vector<ty_gia_ngoai_te> loc_dl_html(const string& nd_html)
 {
-	vector<ExchangeRate> rates;
+	vector<ty_gia_ngoai_te> ds_tygia;
 
 	htmlDocPtr doc = htmlReadMemory(nd_html.c_str(), static_cast<int>(nd_html.size()), nullptr, nullptr, HTML_PARSE_NOERROR | HTML_PARSE_NOWARNING);
 	if (doc == nullptr)
 	{
 		cerr << "Lỗi: Không thể parse HTML content!" << endl;
-		return rates;
+		return ds_tygia;
 	}
 
-	xmlXPathContextPtr xpathCtx = xmlXPathNewContext(doc);
-	if (xpathCtx == nullptr)
+	xmlXPathContextPtr xpath_ctx = xmlXPathNewContext(doc);
+	if (xpath_ctx == nullptr)
 	{
 		cerr << "Lỗi: Không thể tạo XPath context" << endl;
 		xmlFreeDoc(doc);
-		return rates;
+		return ds_tygia;
 	}
 
-	// XPath query: lấy tất cả các hàng <tr> trong bảng có id 'ctl00_Content_ExrateView'
-	xmlXPathObjectPtr xpathObj = xmlXPathEvalExpression(reinterpret_cast<const xmlChar*>("//table[@id='ctl00_Content_ExrateView']//tr"), xpathCtx);
+	xmlXPathObjectPtr xpathObj = xmlXPathEvalExpression(reinterpret_cast<const xmlChar*>("//table[@id='ctl00_Content_ExrateView']//tr"), xpath_ctx);
 	if (xpathObj == nullptr)
 	{
 		cerr << "Lỗi: Không thể thực hiện XPath query" << endl;
-		xmlXPathFreeContext(xpathCtx);
+		xmlXPathFreeContext(xpath_ctx);
 		xmlFreeDoc(doc);
-		return rates;
+		return ds_tygia;
 	}
 
 	xmlNodeSetPtr nut = xpathObj->nodesetval;
@@ -130,50 +120,50 @@ vector<ExchangeRate> parseHTMLFromString(const string& nd_html)
 	for (int i = 0; i < kichthuoc; i++)
 	{
 		xmlNode* hang = nut->nodeTab[i];
-		bool isHeader = false;
+		bool la_hang_tieude = false;
 		for (xmlNode* cot = hang->children; cot; cot = cot->next)
 		{
 			if (cot->type == XML_ELEMENT_NODE && xmlStrcmp(cot->name, reinterpret_cast<const xmlChar*>("th")) == 0)
 			{
-				isHeader = true;
+				la_hang_tieude = true;
 				break;
 			}
 		}
-		if (isHeader)
+		if (la_hang_tieude)
 			continue;
 
-		ExchangeRate rate;
-		int cot_vt = 0;
+		ty_gia_ngoai_te tygia;
+		int vt_cot = 0;
 		for (xmlNode* cot = hang->children; cot; cot = cot->next)
 		{
 			if (cot->type != XML_ELEMENT_NODE || xmlStrcmp(cot->name, reinterpret_cast<const xmlChar*>("td")) != 0)
 				continue;
-			xmlChar* content = xmlNodeGetContent(cot);
-			string value = content ? reinterpret_cast<char*>(content) : "";
-			xmlFree(content);
-			value = cleanValue(value);
-			switch (cot_vt)
+			xmlChar* noidung = xmlNodeGetContent(cot);
+			string giatri = noidung ? reinterpret_cast<char*>(noidung) : "";
+			xmlFree(noidung);
+			giatri = xl_giatri(giatri);
+			switch (vt_cot)
 			{
-				case 0: rate.currency_name = value; break;
-				case 1: rate.currency_code = value; break;
-				case 2: rate.cash_buy = value; break;
-				case 3: rate.transfer_buy = value; break;
-				case 4: rate.sell = value; break;
+				case 0: tygia.ten_ngoaite = giatri; break;
+				case 1: tygia.ma_ngoaite = giatri; break;
+				case 2: tygia.mua_tienmat = giatri; break;
+				case 3: tygia.mua_chuyenkhoan = giatri; break;
+				case 4: tygia.ban = giatri; break;
 				default: break;
 			}
-			cot_vt++;
+			vt_cot++;
 		}
-		if (!rate.currency_name.empty() && !rate.currency_code.empty())
-			rates.push_back(rate);
+		if (!tygia.ten_ngoaite.empty() && !tygia.ma_ngoaite.empty())
+			ds_tygia.push_back(tygia);
 	}
 
 	xmlXPathFreeObject(xpathObj);
-	xmlXPathFreeContext(xpathCtx);
+	xmlXPathFreeContext(xpath_ctx);
 	xmlFreeDoc(doc);
-	return rates;
+	return ds_tygia;
 }
 
-bool UpdateExchangeRate(const string& currency, double mua_tienmat, double mua_chuyenkhoan, double ban)
+bool capnhat_tygia(const string& currency, double mua_tienmat, double mua_chuyenkhoan, double ban)
 {
 	SQLHENV h_env = nullptr;
 	SQLHDBC h_dbc = nullptr;
@@ -199,7 +189,6 @@ bool UpdateExchangeRate(const string& currency, double mua_tienmat, double mua_c
 		return false;
 	}
 
-	// Chuỗi kết nối tới SQL Server
 	string conn_str = "DRIVER={SQL Server};SERVER=" SQL_SERVER ";DATABASE=" SQL_DATABASE ";UID=" SQL_USER ";PWD=" SQL_PASSWORD ";";
 	wstring wconn_str(conn_str.begin(), conn_str.end());
 	ret = SQLDriverConnectW(h_dbc, nullptr, const_cast<SQLWCHAR*>(wconn_str.c_str()), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
@@ -210,7 +199,6 @@ bool UpdateExchangeRate(const string& currency, double mua_tienmat, double mua_c
 		return false;
 	}
 
-	// Thực hiện UPDATE
 	string update_query = "UPDATE tygia_ngoaite SET mua_tienmat = " + to_string(mua_tienmat) +
 		", mua_chuyenkhoan = " + to_string(mua_chuyenkhoan) +
 		", ban = " + to_string(ban) +
@@ -231,15 +219,11 @@ bool UpdateExchangeRate(const string& currency, double mua_tienmat, double mua_c
 	if (ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO)
 	{
 		SQLRowCount(h_stmt, &rowsAffected);
-	} else
-	{
-		// Có thể in ra lỗi nếu cần (như trước)
 	}
 	SQLFreeHandle(SQL_HANDLE_STMT, h_stmt);
 
 	if (rowsAffected == 0)
 	{
-		// Nếu không có bản ghi nào được update, thực hiện INSERT
 		string insert_query = "INSERT INTO tygia_ngoaite (ma_ngoaite, mua_tienmat, mua_chuyenkhoan, ban) VALUES ('" +
 			currency + "', " + to_string(mua_tienmat) + ", " +
 			to_string(mua_chuyenkhoan) + ", " + to_string(ban) + ");";
@@ -256,7 +240,6 @@ bool UpdateExchangeRate(const string& currency, double mua_tienmat, double mua_c
 		ret = SQLExecDirectW(h_stmt, const_cast<SQLWCHAR*>(winsert_query.c_str()), SQL_NTS);
 		if (ret != SQL_SUCCESS && ret != SQL_SUCCESS_WITH_INFO)
 		{
-			// Nếu cần in lỗi: in ra thông báo lỗi chi tiết bằng SQLGetDiagRecW như đã làm trước.
 			SQLFreeHandle(SQL_HANDLE_STMT, h_stmt);
 			SQLDisconnect(h_dbc);
 			SQLFreeHandle(SQL_HANDLE_DBC, h_dbc);
@@ -266,34 +249,31 @@ bool UpdateExchangeRate(const string& currency, double mua_tienmat, double mua_c
 		SQLFreeHandle(SQL_HANDLE_STMT, h_stmt);
 	}
 
-	// Ngắt kết nối và giải phóng handle
 	SQLDisconnect(h_dbc);
 	SQLFreeHandle(SQL_HANDLE_DBC, h_dbc);
 	SQLFreeHandle(SQL_HANDLE_ENV, h_env);
 	return true;
 }
 
-
-// Hàm cập nhật dữ liệu vào CSDL và in ra console thông báo cho từng dòng
-void updateAndPrintData(const vector<ExchangeRate>& rates)
+void capnhat_intb(const vector<ty_gia_ngoai_te>& ds_tygia)
 {
-	for (const auto& rate : rates)
+	for (const auto& tygia : ds_tygia)
 	{
 		// Loại bỏ dấu phẩy trước khi chuyển đổi giá trị số
-		string cashStr = RemoveCommas(rate.cash_buy);
-		string transferStr = RemoveCommas(rate.transfer_buy);
-		string sellStr = RemoveCommas(rate.sell);
+		string strTienMat = bo_dauphay(tygia.mua_tienmat);
+		string strChuyenKhoan = bo_dauphay(tygia.mua_chuyenkhoan);
+		string strBan = bo_dauphay(tygia.ban);
 
-		double cash = (cashStr == "-" || cashStr.empty()) ? 0.0 : std::stod(cashStr);
-		double transfer = (transferStr == "-" || transferStr.empty()) ? 0.0 : std::stod(transferStr);
-		double sell = (sellStr == "-" || sellStr.empty()) ? 0.0 : std::stod(sellStr);
+		double tienmat = (strTienMat == "-" || strTienMat.empty()) ? 0.0 : std::stod(strTienMat);
+		double chuyenkhoan = (strChuyenKhoan == "-" || strChuyenKhoan.empty()) ? 0.0 : std::stod(strChuyenKhoan);
+		double giaban = (strBan == "-" || strBan.empty()) ? 0.0 : std::stod(strBan);
 
-		cout << "Đang cập nhật: " << rate.currency_code
-			<< " | Mua tiền mặt: " << cash
-			<< " | Mua chuyển khoản: " << transfer
-			<< " | Bán: " << sell << " ... ";
+		cout << "Đang cập nhật: " << tygia.ma_ngoaite
+			<< " | Mua tiền mặt: " << tienmat
+			<< " | Mua chuyển khoản: " << chuyenkhoan
+			<< " | Bán: " << giaban << " ... ";
 
-		if (UpdateExchangeRate(rate.currency_code, cash, transfer, sell))
+		if (capnhat_tygia(tygia.ma_ngoaite, tienmat, chuyenkhoan, giaban))
 			cout << "Cập nhật thành công!" << endl;
 		else
 			cerr << "Lỗi cập nhật!" << endl;
@@ -302,23 +282,21 @@ void updateAndPrintData(const vector<ExchangeRate>& rates)
 
 int main()
 {
-	string html = GetExchangeRateData();
+	string html = lay_dl_tygia();
 	if (html.empty())
 	{
 		cerr << "Lỗi: Không thể lấy dữ liệu từ Vietcombank!" << endl;
 		return 1;
 	}
-	//lọc
-	vector<ExchangeRate> rates = parseHTMLFromString(html);
-	if (rates.empty())
+
+	vector<ty_gia_ngoai_te> ds_tygia = loc_dl_html(html);
+	if (ds_tygia.empty())
 	{
 		cerr << "Lỗi: Không tìm thấy dữ liệu tỷ giá trong HTML!" << endl;
 	} else
 	{
-		// Cập nhật dữ liệu
-		updateAndPrintData(rates);
+		capnhat_intb(ds_tygia);
 		cout << "Quá trình cập nhật tỷ giá hoàn tất!" << endl;
 	}
-
 	return 0;
 }
